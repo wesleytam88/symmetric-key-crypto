@@ -1,5 +1,6 @@
 from Crypto.Cipher import AES 
 from Crypto.Random import get_random_bytes
+from urllib.parse import quote
 
 BLOCK_SIZE = 16
 HEADER_SIZE = 54
@@ -53,16 +54,33 @@ def cbc_decrypt(key, iv, ciphertext):
     
     # only last block is padded
     padding_size = plaintext[-1]
-
-    
     plaintext = plaintext[:-padding_size]
 
     return plaintext
 
+def submit(key, iv):
+    prepend_string = "userid=456;userdata="
+    append_string = ";session-id=31337"
+
+    user_string = input("Enter Your Data:")
+    user_string = quote(user_string)
+
+    # My cbc encryption method takes care of padding so it doesn't have to be done here
+    complete_string = prepend_string + user_string + append_string
+    complete_string = bytes(complete_string.encode())
+    
+    return cbc(key, iv, complete_string)
+
+def verify(key, iv, ciphertext):
+    plaintext = cbc_decrypt(key, iv, ciphertext)
+
+    if b";admin=true" in plaintext:
+        return True
+    else:
+        return False
 
 
-def main():
-
+def part1():
     key = get_random_bytes(BLOCK_SIZE)
     iv = get_random_bytes(BLOCK_SIZE)   
 
@@ -92,8 +110,15 @@ def main():
             f.write(decrypt_header)
             f.write(cbc_plaintext)
 
-    
+def part2():
+    part2_key = get_random_bytes(BLOCK_SIZE)
+    part2_iv = get_random_bytes(BLOCK_SIZE)
 
+    ciphertext = submit(part2_key, part2_iv)
+    print(verify(part2_key, part2_iv, ciphertext))
+
+def main():
+    part2()
 
 if __name__ == "__main__":
     main()
