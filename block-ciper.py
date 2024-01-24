@@ -1,16 +1,14 @@
 import typing
 import random
 from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
 import urllib.parse
 
 SIZE_HEADER = 54
-SIZE_BLOCK = 128
+SIZE_BLOCK = 16
 
 def generate_key() -> bytearray:
-    key = bytearray(16)
-    for i, byte in enumerate(key):
-        key[i] = random.randrange(0, 255)
-    return key
+    return get_random_bytes(SIZE_BLOCK)
 
 def generate_IV() -> bytes:
     iv = bytearray(SIZE_BLOCK)
@@ -28,17 +26,16 @@ def file_len(f: typing.BinaryIO) -> int:
     f.seek(currentPos, 0)   # go back to original position
     return length
 
-def encrypt_ECB(block: bytes, key: bytearray) -> bytes:
+def encrypt_ECB(block: bytes, key: bytes) -> bytes:
     '''Given a block of 128 bytes or less, encrypts the block in ECB mode
     using AES and PKCS#7 padding'''
     cipher = AES.new(key, mode=AES.MODE_ECB)
-
 
     # check if block needs padding
     if len(block) < SIZE_BLOCK:
         padding_length = SIZE_BLOCK - len(block)
         block = block.ljust(SIZE_BLOCK, bytes([padding_length]))
-   
+
     # encrypt block
     encrypted_block = cipher.encrypt(block)
     return encrypted_block
@@ -71,21 +68,34 @@ def encrypt_file_CBC(filename: str, key: bytearray, iv: bytes):
                 remaining_encrypted = cipher.encrypt(remaining_padded_xor)
                 encrypted_file.write(remaining_encrypted)
 
-def encrypt_CBC(block: bytes, key: bytearray, iv: bytes) -> bytes:
-    '''Given a block of 128 bytes or less, encrypts the block in CBC mode
-    using AES and PKCS#7 padding'''
-    cipher = AES.new(key, mode=AES.MODE_CBC)
+def encrypt_CBC(plaintext: bytes, key: bytes, iv: bytes) -> bytes:
+    '''Encrypts the plaintext in CBC mode using AES and PKCS#7 padding'''
+    ciphertext = b''
+
+    remaining_length = len(plaintext)
+    i = 0
+    while remaining_length >= SIZE_BLOCK:
+        cipher = AES.new(key, mode=AES.MODE_CBC)
+        block = plaintext[i:i + SIZE_BLOCK]
+        block_xor = xor(block, iv)
+        block_encrypted = cipher.encrypt(block_xor)
+        ciphertext += block_encrypted
+        iv = block_encrypted
+
+        remaining_length -= SIZE_BLOCK
+        i += SIZE_BLOCK
 
     # check if block needs padding
-    if len(block) < SIZE_BLOCK:
-        padding_char = SIZE_BLOCK - len(block)
+    if remaining_length > 0:
+        padding_char = SIZE_BLOCK - remaining_length
+        cipher = AES.new(key, mode=AES.MODE_CBC)
+        block = plaintext[i::]
         block = block.ljust(SIZE_BLOCK, bytes([padding_char]))
+        block_xor = xor(block, iv)
+        block_encrypted = cipher.encrypt(block_xor)
+        ciphertext += block_encrypted
 
-    block_xor = xor(block, iv)
-    print(block_xor.hex())
-    block_encrypted = cipher.encrypt(block_xor)
-    print(block_encrypted.hex())
-    return block_encrypted
+    return ciphertext
 
 def decrypt_file_CBC(filename: str, key: bytearray, iv: bytes):
     cipher = AES.new(key=key, mode=AES.MODE_CBC)
@@ -112,34 +122,51 @@ def decrypt_file_CBC(filename: str, key: bytearray, iv: bytes):
             block_decrypted_no_pad = block_decrypted_xor.rstrip(padding_char)
             decrypted_file.write(block_decrypted_no_pad)
 
-def decrypt_CBC(block_encrypted: bytes,
-                key: bytearray,
-                iv: bytes,
-                isLast=False) -> bytes:
-    '''Given a block of 128 bytes, decrypts the block in CBC mode
-    using AES and PKCS#7 padding'''
-    cipher = AES.new(key, mode=AES.MODE_CBC)
+def decrypt_CBC(ciphertext: bytes, key: bytes, iv: bytes, isLast=False) -> bytes:
+    '''Decrypts the ciphertext in CBC mode using AES and PKCS#7 padding'''
 
-    print(block_encrypted.hex())
+    # cipher = AES.new(key, mode=AES.MODE_CBC, iv=iv)
+    # plaintext = cipher.decrypt(ciphertext)
+    # padding_length = plaintext[-1]
+    # plaintext = plaintext[:-padding_length]
+    # return plaintext
+
+    plaintext = b''
+
+    remaining_length = len(ciphertext)
+    i = 0
+    while remaining_length > SIZE_BLOCK:
+        cipher = AES.new(key, mode=AES.MODE_CBC)
+        block_encrypted = ciphertext[i:i + SIZE_BLOCK]
+        block_decrypted = cipher.decrypt(block_encrypted)
+        block_xor = xor(block_decrypted, iv)
+        plaintext += block_xor
+        iv = block_encrypted
+
+        remaining_length -= SIZE_BLOCK
+        i += SIZE_BLOCK
+
+    # deal with last block
+    block_encrypted = ciphertext[i::]
+    cipher = AES.new(key, mode=AES.MODE_CBC)
     block_decrypted = cipher.decrypt(block_encrypted)
-    print(block_decrypted.hex())
-    block_decrypted_xor = xor(block_decrypted, iv)
-    if isLast:
-        # Strip padding off before returning block
-        # Assumes last byte is a padding byte
-        padding_char = bytes(block_decrypted_xor[-1])
-        block_decrypted_xor = block_decrypted_xor.rstrip(padding_char)
-    return block_decrypted_xor
+    block_xor = xor(block_decrypted, iv)
+    # remove padding (assumes last byte is padding)
+    padding_char = bytes(block_xor[-1])
+    block_no_padding = block_xor.rstrip(padding_char)
+    plaintext += block_no_padding
+
+    return plaintext
 
 def task1():
-    filename = "mustang.bmp"
+    filename = "D:/Wesley/CS-Projects/CSC-321/symmetric-key-crypto/mustang.bmp"
 
     key = generate_key()
     iv = generate_IV()
 
-    # encrypt_CBC(filename, key, iv)
+    # encrypt_file_CBC(filename, key, iv)
 
-    # decrypt_CBC("mustang_encrypted_CBC.bmp", key, iv)
+    # decrypt_file_CBC("mustang_encrypted_CBC.bmp", key, iv)
 
     # encrypt using ECB
     filename_encrypted = filename.split('.')[0] + '_encrypted_ECB.bmp'
@@ -167,41 +194,27 @@ def task1():
     with open(filename_encrypted, 'wb') as encrypted_file:
         with open(filename, 'rb') as f:
             length = file_len(f)
+
             header = f.read(SIZE_HEADER)
             encrypted_file.write(header)
 
-            # loop until not enougb bytes to make a full block
-            while length - f.tell() >= SIZE_BLOCK:
-                block = f.read(SIZE_BLOCK)
-                block_encrypted = encrypt_CBC(block, key, iv)
-                encrypted_file.write(block_encrypted)
-                iv = block_encrypted
-
-            # deal with last chunk of message
-            bytes_left = length - f.tell()
-            if bytes_left > 0:
-                remaining = f.read(bytes_left)
-                remaining_encrypted = encrypt_CBC(remaining, key, iv)
-                encrypted_file.write(remaining_encrypted)
+            data = f.read()
+            encrypted_data = encrypt_CBC(data, key, iv)
+            encrypted_file.write(encrypted_data)
 
     # decrypt CBC
     filename_decrypted = filename.split('.')[0] + '_decrypted.bmp'
     with open(filename_decrypted, 'wb') as decrypted_file:
         with open("mustang_encrypted_CBC.bmp", 'rb') as f:
             length = file_len(f)
+
             header = f.read(SIZE_HEADER)
             decrypted_file.write(header)
 
-            while length - f.tell() > SIZE_BLOCK:
-                block = f.read(SIZE_BLOCK)
-                block_decrypted = decrypt_CBC(block, key, iv)
-                decrypted_file.write(block_decrypted)
-                iv = block
-
-            # last block, deal with padding
-            block = f.read(SIZE_BLOCK)
-            block_decrypted_no_pad = decrypt_CBC(block, key, iv, isLast=True)
-            decrypted_file.write(block_decrypted_no_pad)
+            encrypted_data = f.read()
+            decrypted_data = decrypt_CBC(encrypted_data, key, iv)
+            decrypted_file.write(decrypted_data)
+            
 
 def submit(key: bytearray, iv: bytearray) -> bytes:
     ciphertext: bytes = b''
@@ -241,6 +254,9 @@ def verify(ciphertext: bytes, key: bytearray, iv: bytearray) -> bytes:
         decrypted_block = decrypt_CBC(block, key, iv)
         plaintext += decrypted_block
         iv = block
+
+        i += SIZE_BLOCK
+        remaining_length -= SIZE_BLOCK
    
     # deal with last block of ciphertext
     block = ciphertext[i:i + remaining_length]
@@ -256,8 +272,8 @@ def task2():
     # print(plaintext)
 
 def main():
-    # task1()
-    task2()
+    task1()
+    # task2()
 
 if __name__ == '__main__':
     main()
