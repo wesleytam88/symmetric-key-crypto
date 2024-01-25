@@ -54,7 +54,7 @@ def cbc_decrypt(key, iv, ciphertext):
     
     # only last block is padded
     padding_size = plaintext[-1]
-    plaintext = plaintext[:-padding_size]
+    plaintext += plaintext[:-padding_size]
 
     return plaintext
 
@@ -70,6 +70,30 @@ def submit(key, iv):
     complete_string = bytes(complete_string.encode())
     
     return cbc(key, iv, complete_string)
+
+def tamper(ciphertext: bytes) -> bytes:
+    nine_ascii = 0x39
+    semicolon_ascii = 0x3b
+    equals_ascii = 0x3d
+    ciphertext = list(ciphertext)
+
+    # user_string = 9admin9true
+
+    # the i (ciphertext[4]) in userid
+    # is mapped to same byte as 1st 9 in 9admin9true in CBC encryption
+    first_block_byte = ciphertext[4]
+    decrypted_byte = first_block_byte ^ nine_ascii
+    byte_needed = decrypted_byte ^ semicolon_ascii
+    ciphertext[4] = byte_needed
+
+    # the ; (ciphertext[10]) in ...id=456;user...
+    # is mapped to the same byte as the 2nd 9 in 9admin9true in CBC encryption
+    first_block_byte = ciphertext[10]
+    decrypted_byte = first_block_byte ^ nine_ascii
+    byte_needed = decrypted_byte ^ equals_ascii
+    ciphertext[10] = byte_needed
+
+    return bytes(ciphertext)
 
 def verify(key, iv, ciphertext):
     plaintext = cbc_decrypt(key, iv, ciphertext)
@@ -115,7 +139,8 @@ def part2():
     part2_iv = get_random_bytes(BLOCK_SIZE)
 
     ciphertext = submit(part2_key, part2_iv)
-    print(verify(part2_key, part2_iv, ciphertext))
+    tampered = tamper(ciphertext)
+    print(verify(part2_key, part2_iv, tampered))
 
 def main():
     part2()
